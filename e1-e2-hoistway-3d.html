@@ -2,12 +2,19 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>E1 / E2 Hoistway — Interactive 3D</title>
 <style>
   *{margin:0;padding:0;box-sizing:border-box;}
-  html,body{height:100%;overflow:hidden;background:#10161c;font-family:'Segoe UI',Arial,sans-serif;}
-  #scene{position:fixed;inset:0;}
+  html,body{
+    height:100%;overflow:hidden;background:#10161c;font-family:'Segoe UI',Arial,sans-serif;
+    position:fixed;inset:0;width:100%;
+    overscroll-behavior:none;
+    -webkit-user-select:none;user-select:none;
+    -webkit-touch-callout:none;
+  }
+  #scene{position:fixed;inset:0;touch-action:none;}
+  #scene canvas{touch-action:none;display:block;}
   #hud{
     position:fixed;top:0;left:0;right:0;z-index:10;
     display:flex;flex-wrap:wrap;align-items:center;gap:10px;
@@ -388,15 +395,20 @@ el.addEventListener('wheel', e=>{
   e.preventDefault(); goalPos=null;
   sph.radius = Math.max(90, Math.min(1400, sph.radius * (1 + e.deltaY*0.001)));
 },{passive:false});
-// pinch
+// block Safari page gestures on the canvas entirely
+el.addEventListener('touchstart', e=>e.preventDefault(), {passive:false});
+document.addEventListener('gesturestart', e=>e.preventDefault());
+document.addEventListener('gesturechange', e=>e.preventDefault());
+// pinch zoom
 let pinchD=null;
 el.addEventListener('touchmove', e=>{
+  e.preventDefault();
   if(e.touches.length===2){
     const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX, e.touches[0].clientY-e.touches[1].clientY);
     if(pinchD) sph.radius = Math.max(90, Math.min(1400, sph.radius * pinchD/d));
     pinchD=d; goalPos=null;
   }
-},{passive:true});
+},{passive:false});
 el.addEventListener('touchend', ()=>pinchD=null);
 
 // ---------- toggles ----------
