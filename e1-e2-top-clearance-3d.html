@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>E1 / E2 Top of Hoistway — Interactive 3D</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;}
+  html,body{
+    height:100%;overflow:hidden;background:#10161c;font-family:'Segoe UI',Arial,sans-serif;
+    position:fixed;inset:0;width:100%;
+    overscroll-behavior:none;
+    -webkit-user-select:none;user-select:none;
+    -webkit-touch-callout:none;
+  }
+  #scene{position:fixed;inset:0;touch-action:none;}
+  #scene canvas{touch-action:none;display:block;}
+  #hud{
+    position:fixed;top:0;left:0;right:0;z-index:10;
+    display:flex;flex-wrap:wrap;align-items:center;gap:10px;
+    padding:10px 14px;
+    background:linear-gradient(180deg,rgba(10,15,20,.92),rgba(10,15,20,.55) 80%,transparent);
+    pointer-events:none;
+  }
+  #hud > *{pointer-events:auto;}
+  .title{color:#fff;font-weight:700;font-size:16px;letter-spacing:.5px;margin-right:8px;}
+  .title small{display:block;font-weight:400;font-size:11px;color:#9fb2c0;letter-spacing:1px;}
+  button.cam{
+    background:#1d2b38;color:#dfe9f2;border:1px solid #3a4f63;border-radius:20px;
+    padding:7px 14px;font-size:12.5px;font-weight:600;cursor:pointer;transition:.15s;
+  }
+  button.cam:hover{background:#2d4356;}
+  button.cam.active{background:#3e7bae;border-color:#5b9bd0;color:#fff;}
+  label.tgl{
+    color:#c8d6e0;font-size:12.5px;font-weight:600;display:flex;align-items:center;gap:5px;
+    background:rgba(29,43,56,.8);border:1px solid #3a4f63;border-radius:20px;padding:6px 12px;cursor:pointer;
+  }
+  #info{
+    position:fixed;left:14px;bottom:14px;z-index:10;max-width:350px;
+    background:rgba(13,20,27,.88);border:1px solid #3a4f63;border-radius:10px;
+    padding:12px 14px;color:#dfe9f2;font-size:12.5px;line-height:1.55;
+    backdrop-filter:blur(4px);
+  }
+  #info b{color:#ffd479;}
+  #info .a{color:#ffb020;} #info .g{color:#7ed4a0;} #info .b{color:#6db3f2;} #info .p{color:#c79bf2;}
+  #hint{
+    position:fixed;right:14px;bottom:14px;z-index:10;color:#8ea2b3;font-size:11.5px;
+    background:rgba(13,20,27,.7);padding:7px 11px;border-radius:8px;
+  }
+  @media(max-width:700px){#info{max-width:270px;font-size:11.5px;}}
+</style>
+</head>
+<body>
+<div id="scene"></div>
+
+<div id="hud">
+  <div class="title">E1 / E2 TOP OF HOISTWAY — 3D<small>CAR AT TOP TERMINAL &middot; MUM CLEARANCES &middot; ASME A17.1</small></div>
+  <button class="cam active" data-v="overview">Overview</button>
+  <button class="cam" data-v="mum">MUM Zone</button>
+  <button class="cam" data-v="refuge">Refuge</button>
+  <button class="cam" data-v="equip">Equipment</button>
+  <label class="tgl"><input type="checkbox" id="tglLabels" checked> Labels</label>
+  <label class="tgl"><input type="checkbox" id="tglGhost" checked> Ghost car @ MUM</label>
+  <label class="tgl"><input type="checkbox" id="tglSpin" checked> Auto-rotate</label>
+</div>
+
+<div id="info">
+  <b>MUM = CWT Runby + Buffer Stroke + Jump</b><br>
+  = 20-9/16″ + 18-1/4″ + 8-9/16″ (500 FPM) = <b>47-3/8″</b><br>
+  <span class="a">Amber = MUM travel zone</span> — how far the car CAN rise after the CWT (558′ below) lands on its buffer.<br>
+  <span class="b">Crosshead: MUM + 24″ = 71-3/8″ min</span><br>
+  <span class="g">Refuge (car top): MUM + 43″ = 90-3/8″ min</span><br>
+  <span class="p">Equipment: MUM + 6″ = 53-3/8″ min</span><br>
+  Measure from car sill level with top terminal landing.
+</div>
+<div id="hint">Drag to rotate &middot; Pinch / scroll to zoom &middot; Right-drag to pan</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+// ============================================================
+// Scale: 1 unit = 1 inch. y = 0 at TOP TERMINAL LANDING SILL.
+// E1/E2 values (Section A-A + A17.1):
+//   CWT runby 20.5625  Buffer stroke 18.25  Jump(500FPM) 8.56
+//   MUM = 47.37"  |  Crosshead min 71.37  Refuge min 90.37  Equip min 53.37
+// Car geometry: cab floor 0→112, crosshead top ≈124, sheave top ≈156
+// Overhead beam bottom set at 204 (compliant example):
+//   crosshead clearance 80.0 (PASS) · refuge 92.0 (PASS) · equip 72.0 (PASS)
+// ============================================================
+const MUM = 47.37;
+const CROSS_TOP = 124, CARTOP = 112, EQ_TOP = 132;
+const BEAM_BOT = 204, SLAB_BOT = 248, SLAB_T = 22;
+const WALL_X = 96, BACK_Z = -66, SHAFT_BOT = -420;
+
+let scene, camera, renderer, labelGroup, ghostGroup, glowMats = [], clock;
+let spin = true;
+
+scene = new THREE.Scene();
+scene.background = new THREE.Color(0x10161c);
+scene.fog = new THREE.Fog(0x10161c, 650, 1400);
+camera = new THREE.PerspectiveCamera(45, innerWidth/innerHeight, 1, 4000);
+
+renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputEncoding = THREE.sRGBEncoding;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+document.getElementById('scene').appendChild(renderer.domElement);
+clock = new THREE.Clock();
+
+// lights
+scene.add(new THREE.HemisphereLight(0xbfd4e6, 0x2a2018, 0.55));
+const sun = new THREE.DirectionalLight(0xfff2df, 1.1);
+sun.position.set(300, 420, 360);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.left=-350; sun.shadow.camera.right=350;
+sun.shadow.camera.top=420; sun.shadow.camera.bottom=-450;
+sun.shadow.camera.far=1800; sun.shadow.bias=-0.0004;
+scene.add(sun);
+const lamp = new THREE.PointLight(0xffd9a0, 0.7, 380, 2);
+lamp.position.set(0, 170, 70); scene.add(lamp);
+const fill = new THREE.DirectionalLight(0x8fb8dd, 0.35);
+fill.position.set(-350, 200, -180); scene.add(fill);
+
+// materials
+const M = {
+  concrete: new THREE.MeshStandardMaterial({color:0x9aa3ab, roughness:.95}),
+  concreteDk:new THREE.MeshStandardMaterial({color:0x7e878f, roughness:.95}),
+  steel:    new THREE.MeshStandardMaterial({color:0x59636c, roughness:.45, metalness:.75}),
+  steelDk:  new THREE.MeshStandardMaterial({color:0x39424a, roughness:.5, metalness:.7}),
+  carBlue:  new THREE.MeshStandardMaterial({color:0x2f6ea6, roughness:.35, metalness:.55}),
+  carBlueDk:new THREE.MeshStandardMaterial({color:0x1f4d77, roughness:.4, metalness:.55}),
+  rope:     new THREE.MeshStandardMaterial({color:0x30363b, roughness:.4, metalness:.85}),
+  yellow:   new THREE.MeshStandardMaterial({color:0xd7a520, roughness:.5, metalness:.3}),
+  equip:    new THREE.MeshStandardMaterial({color:0x8a5fb0, roughness:.5, metalness:.4}),
+};
+
+function box(w,h,d, mat, x,y,z){
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w,h,d), mat);
+  m.position.set(x, y + h/2, z);
+  m.castShadow = true; m.receiveShadow = true;
+  scene.add(m); return m;
+}
+function cyl(r,h,mat,x,y,z){
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(r,r,h,28), mat);
+  m.position.set(x, y+h/2, z);
+  m.castShadow = true; m.receiveShadow = true;
+  scene.add(m); return m;
+}
+
+// ---------- structure ----------
+box(16, SLAB_BOT-SHAFT_BOT, 190, M.concrete, -WALL_X-8, SHAFT_BOT, -8);   // left wall
+box(16, SLAB_BOT-SHAFT_BOT, 190, M.concrete,  WALL_X+8, SHAFT_BOT, -8);   // right wall
+box(2*WALL_X+32, SLAB_BOT-SHAFT_BOT, 14, M.concreteDk, 0, SHAFT_BOT, BACK_Z-7); // back wall
+
+// machine room floor slab with rope slot
+box(2*WALL_X+32, SLAB_T, 70, M.concrete, 0, SLAB_BOT, -38);
+box(2*WALL_X+32, SLAB_T, 74, M.concrete, 0, SLAB_BOT, 42);
+box(30, SLAB_T, 40, M.concrete, -WALL_X-8+15, SLAB_BOT, -2);
+box(30, SLAB_T, 40, M.concrete,  WALL_X+8-15, SLAB_BOT, -2);
+
+// lowest overhead obstruction: steel beam under slab
+const beam = box(2*WALL_X+16, 14, 16, M.steelDk, 0, BEAM_BOT, 4);
+box(2*WALL_X+16, 14, 16, M.steelDk, 0, BEAM_BOT, -46);
+
+// drive machine hinted above slab
+box(70, 34, 44, M.steelDk, -20, SLAB_BOT+SLAB_T, -2);
+const dsheave = new THREE.Mesh(new THREE.CylinderGeometry(22,22,12,32), M.steel);
+dsheave.rotation.z = Math.PI/2; dsheave.position.set(36, SLAB_BOT+SLAB_T+24, -2);
+dsheave.castShadow = true; scene.add(dsheave);
+
+// top terminal landing (front right)
+box(120, 12, 90, M.concreteDk, WALL_X+68, -12, 96);
+box(30, 4, 60, M.yellow, WALL_X+8, 0, 96);   // sill marker
+
+// guide rails
+[-56, 56].forEach(x=> box(5, SLAB_BOT-SHAFT_BOT-30, 5, M.steelDk, x, SHAFT_BOT, 4));
+
+// ---------- CAR level at top terminal (sill y=0) ----------
+box(104, 66, 88, M.carBlueDk, 0, -66, 4);              // platform structure below floor
+box(100, 112, 84, M.carBlue, 0, 0, 4);                 // cab
+const win = new THREE.Mesh(new THREE.PlaneGeometry(84,96),
+  new THREE.MeshStandardMaterial({color:0xdfe9f2, emissive:0x9fc4e0, emissiveIntensity:.25, roughness:.8}));
+win.position.set(0, 58, 46.5); scene.add(win);
+box(108, 10, 20, M.steelDk, 0, CARTOP+2, 4);           // crosshead 112→124 top
+const sh = new THREE.Mesh(new THREE.CylinderGeometry(16,16,10,32), M.steel);
+sh.rotation.z = Math.PI/2; sh.position.set(0, 150, 4); sh.castShadow=true; scene.add(sh); // 2:1 sheave
+cyl(1.4, SLAB_BOT-150, M.rope, -14, 150, 4);
+cyl(1.4, SLAB_BOT-150, M.rope,  14, 150, 4);
+// equipment on car top (junction box / inspection station)
+box(26, 20, 22, M.equip, -32, CARTOP, -18);            // top at 132
+// handrail on car top
+[[-46,44],[46,44],[-46,-38],[46,-38]].forEach(p=> cyl(1.2, 42, M.steel, p[0], CARTOP, p[1]));
+cyl(1.2, 92, M.steel, 0,0,0).position.set(0,CARTOP+42,44); // rough top rail front
+(function(){ const r=new THREE.Mesh(new THREE.CylinderGeometry(1.2,1.2,92,10),M.steel);
+  r.rotation.z=Math.PI/2; r.position.set(0,CARTOP+42,44); scene.add(r);
+  const r2=r.clone(); r2.position.z=-38; scene.add(r2); })();
+
+// ---------- GHOST CAR raised by MUM ----------
+ghostGroup = new THREE.Group();
+const gm = new THREE.MeshStandardMaterial({color:0xffb020, transparent:true, opacity:.16, roughness:.5, depthWrite:false});
+function gbox(w,h,d,x,y,z){ const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),gm); m.position.set(x,y+h/2,z); ghostGroup.add(m);}
+gbox(100,112,84, 0, MUM, 4);
+gbox(108,10,20, 0, CARTOP+2+MUM, 4);
+const gEdges = new THREE.LineSegments(
+  new THREE.EdgesGeometry(new THREE.BoxGeometry(100,112,84)),
+  new THREE.LineBasicMaterial({color:0xffb020, transparent:true, opacity:.5}));
+gEdges.position.set(0, MUM+56, 4); ghostGroup.add(gEdges);
+scene.add(ghostGroup);
+
+// ---------- clearance volumes ----------
+function glowBox(w,h,d,x,y,z,color,op,pulse){
+  const mat = new THREE.MeshStandardMaterial({color, emissive:color, emissiveIntensity:.8, transparent:true, opacity:op, depthWrite:false});
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w,h,d), mat);
+  m.position.set(x, y+h/2, z);
+  scene.add(m);
+  if(pulse) glowMats.push(mat);
+  return mat;
+}
+// MUM travel zone above crosshead (amber, pulsing): 124 → 171.37
+glowBox(112, MUM, 26, 0, CROSS_TOP, 4, 0xffb020, .55, true);
+// +24" crosshead code margin (blue): 171.37 → 195.37
+glowBox(112, 24, 26, 0, CROSS_TOP+MUM, 4, 0x3d8fe0, .3, false);
+// refuge column on car top (green): 112 → 112+90.37, offset to open car-top area
+glowBox(46, 90.37, 50, 26, CARTOP, -10, 0x35c47a, .16, false);
+// equipment margin (purple): above equip box 132 → 132+53.37
+glowBox(30, 53.37, 26, -32, EQ_TOP, -18, 0x9a63d8, .3, false);
+
+// ---------- labels ----------
+labelGroup = new THREE.Group(); scene.add(labelGroup);
+function makeLabel(main, sub, accent, x,y,z, scale=1){
+  const c = document.createElement('canvas'); c.width=620; c.height = sub?168:112;
+  const g = c.getContext('2d');
+  g.fillStyle='rgba(13,20,27,.86)';
+  const r=22,w=c.width,h=c.height;
+  g.beginPath(); g.moveTo(r,0); g.arcTo(w,0,w,h,r); g.arcTo(w,h,0,h,r); g.arcTo(0,h,0,0,r); g.arcTo(0,0,w,0,r); g.fill();
+  g.strokeStyle=accent; g.lineWidth=5; g.stroke();
+  g.fillStyle=accent; g.font='700 44px Arial'; g.textAlign='center';
+  g.fillText(main, w/2, sub?64:70);
+  if(sub){ g.fillStyle='#cfdce6'; g.font='500 29px Arial'; g.fillText(sub, w/2, 120); }
+  const tex = new THREE.CanvasTexture(c); tex.encoding = THREE.sRGBEncoding;
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({map:tex, depthTest:false}));
+  sp.scale.set(128*scale, (sub?38:24)*scale, 1);
+  sp.position.set(x,y,z);
+  labelGroup.add(sp);
+}
+makeLabel('MUM 47-3/8″', 'runby 20-9/16 + stroke 18-1/4 + jump 8-9/16', '#ffb020', 0, CROSS_TOP+MUM/2, 84, 1.05);
+makeLabel('CROSSHEAD: MUM + 24″', 'min 71-3/8″ · measured here: 80″ PASS', '#5aa7ef', 0, CROSS_TOP+MUM+30, 76, .95);
+makeLabel('REFUGE: MUM + 43″', 'min 90-3/8″ car top → overhead', '#35c47a', 78, CARTOP+62, 40, .9);
+makeLabel('EQUIPMENT: MUM + 6″', 'min 53-3/8″ above highest gear', '#b07fe8', -66, EQ_TOP+34, 44, .85);
+makeLabel('LOWEST OVERHEAD OBSTRUCTION', null, '#cfdce6', 0, BEAM_BOT+22, 70, .9);
+makeLabel('TOP TERMINAL LANDING', 'car sill level here — measurement position', '#ffd479', WALL_X+56, 26, 96, .8);
+makeLabel('GHOST = CAR AT FULL MUM RISE', 'after CWT lands on buffer 558′ below', '#ffb020', 0, MUM+130, 66, .8);
+makeLabel('MACHINE ROOM FLOOR', null, '#9fb2c0', -40, SLAB_BOT+30, 60, .7);
+
+// ---------- camera ----------
+const views = {
+  overview:{pos:[330, 210, 430], tgt:[0, 120, 0]},
+  mum:{pos:[130, 190, 250], tgt:[0, CROSS_TOP+MUM/2, 4]},
+  refuge:{pos:[200, 200, 190], tgt:[26, CARTOP+50, -10]},
+  equip:{pos:[-170, 190, 190], tgt:[-32, EQ_TOP+26, -18]},
+};
+let target = new THREE.Vector3(...views.overview.tgt);
+let sph = new THREE.Spherical();
+camera.position.set(...views.overview.pos);
+sph.setFromVector3(camera.position.clone().sub(target));
+let goalPos=null, goalTgt=null;
+function setView(n){
+  goalPos = new THREE.Vector3(...views[n].pos);
+  goalTgt = new THREE.Vector3(...views[n].tgt);
+  document.querySelectorAll('button.cam').forEach(b=>b.classList.toggle('active', b.dataset.v===n));
+}
+document.querySelectorAll('button.cam').forEach(b=>b.onclick=()=>setView(b.dataset.v));
+
+let dragging=false, panning=false, px=0, py=0;
+const el = renderer.domElement;
+el.addEventListener('pointerdown', e=>{
+  dragging = e.button===0; panning = e.button===2; px=e.clientX; py=e.clientY;
+  goalPos=null; goalTgt=null;
+});
+addEventListener('pointerup', ()=>{dragging=false; panning=false;});
+addEventListener('pointermove', e=>{
+  const dx=e.clientX-px, dy=e.clientY-py; px=e.clientX; py=e.clientY;
+  if(dragging){
+    sph.theta -= dx*0.005;
+    sph.phi = Math.max(.12, Math.min(Math.PI/2+.3, sph.phi - dy*0.005));
+  } else if(panning){
+    const right = new THREE.Vector3().setFromMatrixColumn(camera.matrix,0);
+    const up = new THREE.Vector3().setFromMatrixColumn(camera.matrix,1);
+    target.addScaledVector(right, -dx*sph.radius*0.0012);
+    target.addScaledVector(up, dy*sph.radius*0.0012);
+  }
+});
+el.addEventListener('contextmenu', e=>e.preventDefault());
+el.addEventListener('wheel', e=>{
+  e.preventDefault(); goalPos=null;
+  sph.radius = Math.max(80, Math.min(1200, sph.radius*(1+e.deltaY*0.001)));
+},{passive:false});
+el.addEventListener('touchstart', e=>e.preventDefault(), {passive:false});
+document.addEventListener('gesturestart', e=>e.preventDefault());
+document.addEventListener('gesturechange', e=>e.preventDefault());
+let pinchD=null;
+el.addEventListener('touchmove', e=>{
+  e.preventDefault();
+  if(e.touches.length===2){
+    const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX, e.touches[0].clientY-e.touches[1].clientY);
+    if(pinchD) sph.radius = Math.max(80, Math.min(1200, sph.radius*pinchD/d));
+    pinchD=d; goalPos=null;
+  }
+},{passive:false});
+el.addEventListener('touchend', ()=>pinchD=null);
+
+document.getElementById('tglLabels').onchange = e=> labelGroup.visible = e.target.checked;
+document.getElementById('tglGhost').onchange = e=> ghostGroup.visible = e.target.checked;
+document.getElementById('tglSpin').onchange = e=> spin = e.target.checked;
+
+function animate(){
+  requestAnimationFrame(animate);
+  const t = clock.getElapsedTime();
+  glowMats.forEach(m=> m.opacity = .38 + .28*Math.sin(t*3.0));
+  if(spin && !dragging && !goalPos) sph.theta += 0.0016;
+  if(goalPos){
+    camera.position.lerp(goalPos, .06);
+    target.lerp(goalTgt, .06);
+    sph.setFromVector3(camera.position.clone().sub(target));
+    if(camera.position.distanceTo(goalPos) < 1){ goalPos=null; goalTgt=null; }
+  } else {
+    camera.position.setFromSpherical(sph).add(target);
+  }
+  camera.lookAt(target);
+  renderer.render(scene, camera);
+}
+addEventListener('resize', ()=>{
+  camera.aspect = innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+animate();
+</script>
+</body>
+</html>
