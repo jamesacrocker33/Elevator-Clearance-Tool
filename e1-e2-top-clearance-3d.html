@@ -62,9 +62,10 @@
   <label class="tgl"><input type="checkbox" id="tglLabels" checked> Labels</label>
   <label class="tgl"><input type="checkbox" id="tglGhost" checked> Ghost car @ MUM</label>
   <label class="tgl"><input type="checkbox" id="tglSpin" checked> Auto-rotate</label>
+  <label class="tgl"><input type="checkbox" id="tglInfo"> MUM Info</label>
 </div>
 
-<div id="info">
+<div id="info" style="display:none;">
   <b>MUM = CWT Runby + Buffer Stroke + Jump</b><br>
   = 20-9/16″ + 18-1/4″ + 8-9/16″ (500 FPM) = <b>47-3/8″</b><br>
   <span class="a">Amber = MUM travel zone</span> — how far the car CAN rise after the CWT (558′ below) lands on its buffer.<br>
@@ -316,6 +317,7 @@ el.addEventListener('touchend', ()=>pinchD=null);
 document.getElementById('tglLabels').onchange = e=> labelGroup.visible = e.target.checked;
 document.getElementById('tglGhost').onchange = e=> ghostGroup.visible = e.target.checked;
 document.getElementById('tglSpin').onchange = e=> spin = e.target.checked;
+document.getElementById('tglInfo').onchange = e=> document.getElementById('info').style.display = e.target.checked ? 'block' : 'none';
 
 function animate(){
   requestAnimationFrame(animate);
